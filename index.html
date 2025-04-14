@@ -96,8 +96,8 @@
         // Thresholds
         const maxHorizOffset = 0.01;
         const maxEyeLevelDiff = 0.01;
-        const minPitchRatio = 0.28;
-        const maxPitchRatio = 0.55;
+        const minPitchRatio = 0.3;
+        const maxPitchRatio = 0.6;
 
         return (
           horizOffset < maxHorizOffset &&
@@ -153,7 +153,7 @@
         const horizontalLeft = distance(leftLeft, rightLeft);
         const ratioLeft = verticalLeft / horizontalLeft;
 
-        const eyeOpenThreshold = 0.2; // Empirically tested for normalized coordinates
+        const eyeOpenThreshold = 0.22; // Empirically tested for normalized coordinates
 
         return ratioRight > eyeOpenThreshold && ratioLeft > eyeOpenThreshold;
       }
