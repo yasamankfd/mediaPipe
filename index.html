@@ -2,12 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Frontal Face Detection with Occlusion</title>
+    <title>Face Capture</title>
     <style>
       body {
         margin: 0;
         overflow: hidden;
         font-family: Arial, sans-serif;
+        background: black;
+      }
+      #status {
+        position: absolute;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 10px;
+        border-radius: 5px;
+        font-size: 18px;
+        z-index: 10;
+        text-align: center;
       }
 
       #videoElement,
@@ -20,158 +34,156 @@
         object-fit: cover;
       }
 
-      #status {
+      #capturedImage {
+        display: none;
         position: absolute;
-        top: 10px;
-        left: 10px;
-        background: rgba(0, 0, 0, 0.7);
-        color: white;
-        padding: 10px;
-        border-radius: 5px;
-        font-size: 18px;
-        z-index: 10;
-      }
-
-      #saveButton {
-        position: absolute;
-        top: 60px;
-        left: 10px;
-        background: #4caf50;
-        color: white;
-        padding: 10px 16px;
-        border: none;
-        border-radius: 5px;
-        font-size: 16px;
-        cursor: pointer;
-        z-index: 10;
-      }
-
-      #saveButton:hover {
-        background: #45a049;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        object-fit: contain;
+        z-index: 20;
       }
     </style>
   </head>
   <body>
     <video id="videoElement" autoplay muted playsinline></video>
-    <canvas class="output_canvas" id="output"></canvas>
-    <div id="status">⏳ در حال بارگذاری مدل...</div>
-    <button id="saveButton">📸 ذخیره تصویر</button>
+    <canvas id="output"></canvas>
+    <div class="status">
+      <div id="status">⏳ Loading MediaPipe...</div>
+    </div>
+    <img id="capturedImage" />
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-
     <script>
       const videoElement = document.getElementById("videoElement");
       const canvasElement = document.getElementById("output");
       const canvasCtx = canvasElement.getContext("2d");
       const statusText = document.getElementById("status");
+      const capturedImage = document.getElementById("capturedImage");
 
-      let lastLandmarks = null;
-      let lastIsFrontal = false;
-      let lastIsOccluded = false;
+      let frontalTimer = 0;
+      const CAPTURE_THRESHOLD = 10;
+      let captured = false;
+      let cameraInstance = null;
 
-      let recentStatuses = [];
-      const STATUS_WINDOW = 5;
-
-      function stableStatus(newStatus) {
-        recentStatuses.push(newStatus);
-        if (recentStatuses.length > STATUS_WINDOW) {
-          recentStatuses.shift();
-        }
-
-        const counts = {};
-        for (const s of recentStatuses) {
-          counts[s] = (counts[s] || 0) + 1;
-        }
-
-        let topStatus = newStatus;
-        let maxCount = 0;
-        for (const [status, count] of Object.entries(counts)) {
-          if (count > maxCount) {
-            topStatus = status;
-            maxCount = count;
-          }
-        }
-
-        return topStatus;
-      }
-
-      document.getElementById("saveButton").addEventListener("click", () => {
-        if (!lastLandmarks || !lastIsFrontal || lastIsOccluded) {
-          alert("لطفاً مطمئن شوید که چهره واضح و بدون انسداد است.");
-          return;
-        }
-
-        const link = document.createElement("a");
-        link.download = "face_snapshot.png";
-        link.href = canvasElement.toDataURL("image/png");
-        link.click();
-      });
+      let prevLandmarks = [];
+      const STILLNESS_FRAMES = 5;
+      const STILLNESS_THRESHOLD = 0.002;
 
       function isFrontal(landmarks) {
         const leftEye = landmarks[33];
         const rightEye = landmarks[263];
         const noseTip = landmarks[1];
         const chin = landmarks[152];
+        const forehead = landmarks[10]; // between the eyebrows, good to detect downward tilt
 
-        const midX = (leftEye.x + rightEye.x) / 2;
-        const horizOffset = Math.abs(noseTip.x - midX);
-        const verticalRatio = Math.abs(chin.y - noseTip.y);
+        // Horizontal symmetry check
+        const midEyeX = (leftEye.x + rightEye.x) / 2;
+        const horizOffset = Math.abs(noseTip.x - midEyeX);
 
-        const maxHorizOffset = 0.035;
-        const minVerticalLength = 0.08;
+        // Eye level symmetry
+        const eyeLevelDiff = Math.abs(leftEye.y - rightEye.y);
+
+        // Pitch detection: vertical distance between forehead → nose → chin
+        const foreheadToChin = Math.abs(forehead.y - chin.y);
+        const noseToChin = Math.abs(noseTip.y - chin.y);
+        const noseToForehead = Math.abs(noseTip.y - forehead.y);
+
+        const pitchRatio = noseToChin / foreheadToChin; // Should be between ~0.35 - 0.65 for frontal faces
+
+        // Thresholds
+        const maxHorizOffset = 0.01;
+        const maxEyeLevelDiff = 0.01;
+        const minPitchRatio = 0.35;
+        const maxPitchRatio = 0.55;
 
         return (
-          horizOffset < maxHorizOffset && verticalRatio > minVerticalLength
+          horizOffset < maxHorizOffset &&
+          eyeLevelDiff < maxEyeLevelDiff &&
+          pitchRatio > minPitchRatio &&
+          pitchRatio < maxPitchRatio
         );
       }
 
-      let referenceRatios = null;
-      const ratioPairs = [
-        [33, 263],
-        [133, 362],
-        [61, 291],
-        [13, 152],
-        [1, 199],
-        [33, 61],
-        [263, 291],
-        [1, 13],
-        [168, 8],
-        [234, 454],
-        [10, 152],
-        [67, 297],
-        [0, 17],
-        [17, 36],
-        [78, 308],
-      ];
-
-      function computeRatios(landmarks) {
-        return ratioPairs.map(([i, j]) => {
-          const dx = landmarks[i].x - landmarks[j].x;
-          const dy = landmarks[i].y - landmarks[j].y;
-          return Math.sqrt(dx * dx + dy * dy);
-        });
+      // function distance(p1, p2) {
+      //   return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+      // }
+      function distance(p1, p2) {
+        const dx = p1.x - p2.x;
+        const dy = p1.y - p2.y;
+        return Math.sqrt(dx * dx + dy * dy);
       }
 
-      function isOccluded(landmarks) {
-        const currentRatios = computeRatios(landmarks);
-        if (!referenceRatios) {
-          referenceRatios = currentRatios;
-          return false;
-        }
+      function getEAR(landmarks, left) {
+        const indices = left
+          ? [362, 385, 387, 263, 373, 380] // Right eye (mirrored)
+          : [33, 160, 158, 133, 153, 144]; // Left eye
+        const p1 = landmarks[indices[1]];
+        const p2 = landmarks[indices[2]];
+        const p3 = landmarks[indices[5]];
+        const p4 = landmarks[indices[4]];
+        const p0 = landmarks[indices[0]];
+        const p5 = landmarks[indices[3]];
 
-        let deviationCount = 0;
-        for (let i = 0; i < ratioPairs.length; i++) {
-          const ref = referenceRatios[i];
-          const curr = currentRatios[i];
-          const diff = Math.abs(curr - ref) / ref;
+        const vertical = (distance(p1, p2) + distance(p3, p4)) / 2.0;
+        const horizontal = distance(p0, p5);
+        return vertical / horizontal;
+      }
 
-          if (diff > 0.1) {
-            deviationCount++;
+      function eyesAreOpen(landmarks) {
+        // Right eye (horizontal: 33–133, vertical: 159–145)
+        const upperRight = landmarks[159];
+        const lowerRight = landmarks[145];
+        const leftRight = landmarks[133];
+        const rightRight = landmarks[33];
+
+        const verticalRight = distance(upperRight, lowerRight);
+        const horizontalRight = distance(leftRight, rightRight);
+        const ratioRight = verticalRight / horizontalRight;
+
+        // Left eye (horizontal: 362–263, vertical: 386–374)
+        const upperLeft = landmarks[386];
+        const lowerLeft = landmarks[374];
+        const leftLeft = landmarks[362];
+        const rightLeft = landmarks[263];
+
+        const verticalLeft = distance(upperLeft, lowerLeft);
+        const horizontalLeft = distance(leftLeft, rightLeft);
+        const ratioLeft = verticalLeft / horizontalLeft;
+
+        const eyeOpenThreshold = 0.2; // Empirically tested for normalized coordinates
+
+        return ratioRight > eyeOpenThreshold && ratioLeft > eyeOpenThreshold;
+      }
+
+      function isStill(current, previousSet) {
+        if (previousSet.length < STILLNESS_FRAMES) return false;
+        let totalDelta = 0;
+        const indices = [33, 263, 1, 152, 168];
+
+        for (let i = 0; i < previousSet.length; i++) {
+          for (let j = 0; j < indices.length; j++) {
+            const idx = indices[j];
+            totalDelta += distance(current[idx], previousSet[i][idx]);
           }
         }
+        const avgDelta = totalDelta / (indices.length * previousSet.length);
+        return avgDelta < STILLNESS_THRESHOLD;
+      }
 
-        return deviationCount >= 1;
+      function saveAndDisplayImage() {
+        const imageData = canvasElement.toDataURL("image/png");
+        capturedImage.src = imageData;
+        capturedImage.style.display = "block";
+        videoElement.style.display = "none";
+        canvasElement.style.display = "none";
+        statusText.textContent = "📸 تصویر ذخیره شد";
+        if (cameraInstance) {
+          cameraInstance.stop();
+        }
+        captured = true;
       }
 
       const faceMesh = new FaceMesh({
@@ -182,8 +194,8 @@
       faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true,
-        minDetectionConfidence: 0.9,
-        minTrackingConfidence: 0.6,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7,
       });
 
       faceMesh.onResults((results) => {
@@ -201,24 +213,38 @@
         );
 
         if (results.multiFaceLandmarks.length === 0) {
-          statusText.textContent = stableStatus("❌ چهره ای تشخیص داده نشد");
+          statusText.textContent = "❌ چهره‌ای تشخیص داده نشد";
+          frontalTimer = 0;
+          prevLandmarks = [];
         } else {
           const landmarks = results.multiFaceLandmarks[0];
-          lastLandmarks = landmarks;
-          lastIsFrontal = isFrontal(landmarks);
-          lastIsOccluded = isOccluded(landmarks);
+          const frontal = isFrontal(landmarks);
+          const eyesOpen = eyesAreOpen(landmarks);
+          const still = isStill(landmarks, prevLandmarks);
 
-          let status = "";
-
-          if (!lastIsFrontal) {
-            status = "⚠️ چهره روبروی دوربین نیست";
-          } else if (lastIsOccluded) {
-            status = "⚠️ چهره مشخص نیست";
-          } else {
-            status = "✅ چهره صحیح است";
+          if (prevLandmarks.length >= STILLNESS_FRAMES) {
+            prevLandmarks.shift();
           }
+          prevLandmarks.push(landmarks);
 
-          statusText.textContent = stableStatus(status);
+          if (!frontal) {
+            statusText.textContent = "⚠️ چهره روبرو نیست";
+            frontalTimer = 0;
+          } else if (!eyesOpen) {
+            statusText.textContent = "👀 چشم‌ها بسته‌اند";
+            frontalTimer = 0;
+          } else if (!still) {
+            statusText.textContent = "🔄 منتظر ثابت شدن چهره...";
+            frontalTimer = 0;
+          } else {
+            statusText.textContent = `✅ آماده (${(frontalTimer / 20).toFixed(
+              1
+            )}s)`;
+            frontalTimer++;
+            if (frontalTimer >= CAPTURE_THRESHOLD && !captured) {
+              saveAndDisplayImage();
+            }
+          }
         }
 
         canvasCtx.restore();
@@ -228,9 +254,11 @@
         onFrame: async () => {
           await faceMesh.send({ image: videoElement });
         },
-        width: 640,
-        height: 480,
+        width: 1280,
+        height: 720,
       });
+
+      cameraInstance = camera;
 
       camera.start().then(() => {
         statusText.textContent = "🧠 در حال تشخیص چهره...";
