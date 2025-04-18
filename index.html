@@ -23,7 +23,6 @@
         z-index: 10;
         text-align: center;
       }
-
       #videoElement,
       canvas {
         position: absolute;
@@ -33,7 +32,6 @@
         height: 100vh;
         object-fit: cover;
       }
-
       #capturedImage {
         display: none;
         position: absolute;
@@ -64,98 +62,49 @@
       const capturedImage = document.getElementById("capturedImage");
 
       let frontalTimer = 0;
-      const CAPTURE_THRESHOLD = 5;
+      const CAPTURE_THRESHOLD = 10;
       let captured = false;
       let cameraInstance = null;
-
       let prevLandmarks = [];
       const STILLNESS_FRAMES = 5;
       const STILLNESS_THRESHOLD = 0.002;
 
-      function isFrontal(landmarks) {
-        const leftEye = landmarks[33];
-        const rightEye = landmarks[263];
-        const noseTip = landmarks[1];
-        const chin = landmarks[152];
-        const forehead = landmarks[10]; // between the eyebrows, good to detect downward tilt
-
-        // Horizontal symmetry check
-        const midEyeX = (leftEye.x + rightEye.x) / 2;
-        const horizOffset = Math.abs(noseTip.x - midEyeX);
-
-        // Eye level symmetry
-        const eyeLevelDiff = Math.abs(leftEye.y - rightEye.y);
-
-        // Pitch detection: vertical distance between forehead → nose → chin
-        const foreheadToChin = Math.abs(forehead.y - chin.y);
-        const noseToChin = Math.abs(noseTip.y - chin.y);
-        const noseToForehead = Math.abs(noseTip.y - forehead.y);
-
-        const pitchRatio = noseToChin / foreheadToChin; // Should be between ~0.35 - 0.65 for frontal faces
-
-        // Thresholds
-        const maxHorizOffset = 0.01;
-        const maxEyeLevelDiff = 0.01;
-        const minPitchRatio = 0.3;
-        const maxPitchRatio = 0.5;
-
-        return (
-          horizOffset < maxHorizOffset &&
-          eyeLevelDiff < maxEyeLevelDiff &&
-          pitchRatio > minPitchRatio &&
-          pitchRatio < maxPitchRatio
-        );
-      }
-
-      // function distance(p1, p2) {
-      //   return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
-      // }
       function distance(p1, p2) {
         const dx = p1.x - p2.x;
         const dy = p1.y - p2.y;
         return Math.sqrt(dx * dx + dy * dy);
       }
 
-      function getEAR(landmarks, left) {
-        const indices = left
-          ? [362, 385, 387, 263, 373, 380] // Right eye (mirrored)
-          : [33, 160, 158, 133, 153, 144]; // Left eye
-        const p1 = landmarks[indices[1]];
-        const p2 = landmarks[indices[2]];
-        const p3 = landmarks[indices[5]];
-        const p4 = landmarks[indices[4]];
-        const p0 = landmarks[indices[0]];
-        const p5 = landmarks[indices[3]];
+      function isFrontal(landmarks) {
+        const leftEye = landmarks[33];
+        const rightEye = landmarks[263];
+        const noseTip = landmarks[1];
+        const chin = landmarks[152];
+        const forehead = landmarks[10];
 
-        const vertical = (distance(p1, p2) + distance(p3, p4)) / 2.0;
-        const horizontal = distance(p0, p5);
-        return vertical / horizontal;
+        const midEyeX = (leftEye.x + rightEye.x) / 2;
+        const horizOffset = Math.abs(noseTip.x - midEyeX);
+        const eyeLevelDiff = Math.abs(leftEye.y - rightEye.y);
+        const foreheadToChin = Math.abs(forehead.y - chin.y);
+        const noseToChin = Math.abs(noseTip.y - chin.y);
+        const pitchRatio = noseToChin / foreheadToChin;
+
+        return (
+          horizOffset < 0.01 &&
+          eyeLevelDiff < 0.01 &&
+          pitchRatio > 0.3 &&
+          pitchRatio < 0.6
+        );
       }
 
       function eyesAreOpen(landmarks) {
-        // Right eye (horizontal: 33–133, vertical: 159–145)
-        const upperRight = landmarks[159];
-        const lowerRight = landmarks[145];
-        const leftRight = landmarks[133];
-        const rightRight = landmarks[33];
-
-        const verticalRight = distance(upperRight, lowerRight);
-        const horizontalRight = distance(leftRight, rightRight);
-        const ratioRight = verticalRight / horizontalRight;
-
-        // Left eye (horizontal: 362–263, vertical: 386–374)
-        const upperLeft = landmarks[386];
-        const lowerLeft = landmarks[374];
-        const leftLeft = landmarks[362];
-        const rightLeft = landmarks[263];
-
-        const verticalLeft = distance(upperLeft, lowerLeft);
-        const horizontalLeft = distance(leftLeft, rightLeft);
-        const ratioLeft = verticalLeft / horizontalLeft;
-
-        const eyeOpenThreshold = 0.15; // Empirically tested for normalized coordinates
-
-        return ratioRight > eyeOpenThreshold && ratioLeft > eyeOpenThreshold;
+        const rightRatio =
+          distance(landmarks[159], landmarks[145]) /
+          distance(landmarks[133], landmarks[33]);
+        const leftRatio =
+          distance(landmarks[386], landmarks[374]) /
+          distance(landmarks[362], landmarks[263]);
+        return rightRatio > 0.15 && leftRatio > 0.15;
       }
 
       function isStill(current, previousSet) {
@@ -173,6 +122,23 @@
         return avgDelta < STILLNESS_THRESHOLD;
       }
 
+      function isMouthOpen(landmarks) {
+        return distance(landmarks[13], landmarks[14]) > 0.03;
+      }
+
+      function isSmiling(landmarks) {
+        const leftCorner = landmarks[61];
+        const rightCorner = landmarks[291];
+        const upperLip = landmarks[0];
+        const lowerLip = landmarks[17];
+
+        const mouthCenterY = (upperLip.y + lowerLip.y) / 2;
+        const avgCornerY = (leftCorner.y + rightCorner.y) / 2;
+
+        const smileDelta = mouthCenterY - avgCornerY;
+        return smileDelta > 0.01; // tweak as needed
+      }
+
       function saveAndDisplayImage() {
         const imageData = canvasElement.toDataURL("image/png");
         capturedImage.src = imageData;
@@ -180,9 +146,7 @@
         videoElement.style.display = "none";
         canvasElement.style.display = "none";
         statusText.textContent = "📸 تصویر ذخیره شد";
-        if (cameraInstance) {
-          cameraInstance.stop();
-        }
+        if (cameraInstance) cameraInstance.stop();
         captured = true;
       }
 
@@ -201,7 +165,6 @@
       faceMesh.onResults((results) => {
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
-
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(
@@ -221,10 +184,10 @@
           const frontal = isFrontal(landmarks);
           const eyesOpen = eyesAreOpen(landmarks);
           const still = isStill(landmarks, prevLandmarks);
+          const mouthOpen = isMouthOpen(landmarks);
+          const smiling = isSmiling(landmarks);
 
-          if (prevLandmarks.length >= STILLNESS_FRAMES) {
-            prevLandmarks.shift();
-          }
+          if (prevLandmarks.length >= STILLNESS_FRAMES) prevLandmarks.shift();
           prevLandmarks.push(landmarks);
 
           if (!frontal) {
@@ -236,6 +199,12 @@
           } else if (!still) {
             statusText.textContent = "🔄 منتظر ثابت شدن چهره...";
             frontalTimer = 0;
+          } else if (smiling) {
+            statusText.textContent = "🙂 لطفا چهره خنثی باشد (بدون لبخند)";
+            frontalTimer = 0;
+          } else if (mouthOpen) {
+            statusText.textContent = "🙂 لطفا چهره خنثی باشد (دهان بسته)";
+            frontalTimer = 0;
           } else {
             statusText.textContent = `✅ آماده (${(frontalTimer / 20).toFixed(
               1
@@ -246,20 +215,16 @@
             }
           }
         }
-
         canvasCtx.restore();
       });
 
       const camera = new Camera(videoElement, {
-        onFrame: async () => {
-          await faceMesh.send({ image: videoElement });
-        },
+        onFrame: async () => await faceMesh.send({ image: videoElement }),
         width: 1280,
         height: 720,
       });
 
       cameraInstance = camera;
-
       camera.start().then(() => {
         statusText.textContent = "🧠 در حال تشخیص چهره...";
       });
