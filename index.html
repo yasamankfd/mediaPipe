@@ -123,7 +123,30 @@
       }
 
       function isMouthOpen(landmarks) {
-        return distance(landmarks[13], landmarks[14]) > 0.03;
+        // Upper lip's lower boundary (midline and left-right edges)
+        const upperMid = landmarks[0]; // Midpoint of the upper lip (below the nose)
+        const upperLeft = landmarks[2]; // Left corner of the upper lip
+        const upperRight = landmarks[4]; // Right corner of the upper lip
+
+        // Lower lip's upper boundary (midline and left-right edges)
+        const lowerMid = landmarks[13]; // Midpoint of the lower lip
+        const lowerLeft = landmarks[14]; // Left corner of the lower lip
+        const lowerRight = landmarks[16]; // Right corner of the lower lip
+
+        // Calculate the distances between the midpoints and corners of the upper and lower lips
+        const upperToLowerMid = distance(upperMid, lowerMid);
+        const upperToLowerLeft = distance(upperLeft, lowerLeft);
+        const upperToLowerRight = distance(upperRight, lowerRight);
+
+        // Define a threshold for "closed" lips
+        const THRESHOLD = 0.1; // Adjust based on your testing (distance should be small when lips are closed)
+
+        // If the distance between the upper and lower lip boundaries is small, the mouth is closed
+        return !(
+          upperToLowerMid < THRESHOLD &&
+          upperToLowerLeft < THRESHOLD &&
+          upperToLowerRight < THRESHOLD
+        );
       }
 
       function isSmiling(landmarks) {
