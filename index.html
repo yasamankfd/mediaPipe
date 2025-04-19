@@ -20,7 +20,7 @@
         padding: 10px;
         border-radius: 5px;
         font-size: 18px;
-        z-index: 10;
+        z-index: 30;
         text-align: center;
       }
       #videoElement,
@@ -181,13 +181,14 @@
         capturedImage.style.display = "block";
         videoElement.style.display = "none";
         canvasElement.style.display = "none";
-        statusText.textContent = "📸 تصویر ذخیره شد";
-        downloadBtn.style.display = "block"; // Show download button
+        statusText.textContent = "📸 لطفاً تصویر گرفته‌شده را بررسی کنید"; // Updated line
+        downloadBtn.style.display = "block";
         if (cameraInstance) cameraInstance.stop();
         captured = true;
       }
 
       downloadBtn.addEventListener("click", () => {
+        statusText.textContent = "📸 تصویر گرفته‌شد"; // Updated line
         const link = document.createElement("a");
         link.href = capturedImage.src;
         link.download = "capture.png";
@@ -207,6 +208,8 @@
       });
 
       faceMesh.onResults((results) => {
+        if (captured) return; // Stop processing and updating status after capture
+
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
         canvasCtx.save();
