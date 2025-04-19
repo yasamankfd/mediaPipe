@@ -19,7 +19,7 @@
         color: white;
         padding: 10px;
         border-radius: 5px;
-        font-size: 28px;
+        font-size: 18px;
         z-index: 10;
         text-align: center;
       }
@@ -42,6 +42,24 @@
         object-fit: contain;
         z-index: 20;
       }
+      #downloadBtn {
+        display: none;
+        position: absolute;
+        top: 60px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 30;
+        padding: 10px 20px;
+        font-size: 16px;
+        background: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #downloadBtn:hover {
+        background: #45a049;
+      }
     </style>
   </head>
   <body>
@@ -51,6 +69,7 @@
       <div id="status">⏳ Loading MediaPipe...</div>
     </div>
     <img id="capturedImage" />
+    <button id="downloadBtn">⬇️ Download Image</button>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
@@ -60,6 +79,7 @@
       const canvasCtx = canvasElement.getContext("2d");
       const statusText = document.getElementById("status");
       const capturedImage = document.getElementById("capturedImage");
+      const downloadBtn = document.getElementById("downloadBtn");
 
       let frontalTimer = 0;
       const CAPTURE_THRESHOLD = 10;
@@ -123,25 +143,18 @@
       }
 
       function isMouthOpen(landmarks) {
-        // Upper lip's lower boundary (midline and left-right edges)
-        const upperMid = landmarks[0]; // Midpoint of the upper lip (below the nose)
-        const upperLeft = landmarks[2]; // Left corner of the upper lip
-        const upperRight = landmarks[4]; // Right corner of the upper lip
+        const upperMid = landmarks[0];
+        const upperLeft = landmarks[2];
+        const upperRight = landmarks[4];
+        const lowerMid = landmarks[13];
+        const lowerLeft = landmarks[14];
+        const lowerRight = landmarks[16];
 
-        // Lower lip's upper boundary (midline and left-right edges)
-        const lowerMid = landmarks[13]; // Midpoint of the lower lip
-        const lowerLeft = landmarks[14]; // Left corner of the lower lip
-        const lowerRight = landmarks[16]; // Right corner of the lower lip
-
-        // Calculate the distances between the midpoints and corners of the upper and lower lips
         const upperToLowerMid = distance(upperMid, lowerMid);
         const upperToLowerLeft = distance(upperLeft, lowerLeft);
         const upperToLowerRight = distance(upperRight, lowerRight);
 
-        // Define a threshold for "closed" lips
-        const THRESHOLD = 0.15; // Adjust based on your testing (distance should be small when lips are closed)
-
-        // If the distance between the upper and lower lip boundaries is small, the mouth is closed
+        const THRESHOLD = 0.15;
         return !(
           upperToLowerMid < THRESHOLD &&
           upperToLowerLeft < THRESHOLD &&
@@ -159,7 +172,7 @@
         const avgCornerY = (leftCorner.y + rightCorner.y) / 2;
 
         const smileDelta = mouthCenterY - avgCornerY;
-        return smileDelta > 0.01; // tweak as needed
+        return smileDelta > 0.01;
       }
 
       function saveAndDisplayImage() {
@@ -169,9 +182,17 @@
         videoElement.style.display = "none";
         canvasElement.style.display = "none";
         statusText.textContent = "📸 تصویر ذخیره شد";
+        downloadBtn.style.display = "block"; // Show download button
         if (cameraInstance) cameraInstance.stop();
         captured = true;
       }
+
+      downloadBtn.addEventListener("click", () => {
+        const link = document.createElement("a");
+        link.href = capturedImage.src;
+        link.download = "capture.png";
+        link.click();
+      });
 
       const faceMesh = new FaceMesh({
         locateFile: (file) =>
